@@ -11,8 +11,15 @@
   AL.route('/docs', P.docs);
   AL.route('/docs/:page', P.docs);
   AL.route('/login', P.login);
+  AL.route('/signup', P.signup);
   AL.route('/dashboard', P.dashboard);
   AL.route('/dashboard/:tab', P.dashboard);
   AL.route('/legal/:page', P.legal);
-  AL.render();
+
+  // 로그인 세션을 확인한 뒤 첫 화면을 그린다
+  AL.api('GET', '/api/me').then((r) => {
+    AL.apiOffline = r.status === 0;
+    AL.session = r.ok ? r.data.user : null;
+    AL.render();
+  });
 })();

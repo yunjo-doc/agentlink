@@ -79,7 +79,7 @@ ${AL.MCP_TOOLS.map((t) => `<tr><td><code>${t.name}</code></td><td>${L(t.desc)}</
       body: `
 <p class="lead">${T('가입부터 첫 발행까지 5단계입니다.', 'Five steps from sign-up to your first post.')}</p>
 <ol class="steps">
-  <li><strong>${T('로그인', 'Sign in')}</strong><p>${T('Google, GitHub 또는 이메일로 로그인합니다.', 'Sign in with Google, GitHub or email.')} <a href="#/login?next=/dashboard">${T('로그인', 'Sign in')} →</a></p></li>
+  <li><strong>${T('가입 신청과 승인', 'Request access')}</strong><p>${T('가입 신청을 보내고 관리자 승인을 받은 뒤 이메일과 비밀번호로 로그인합니다.', 'Submit an access request; once an admin approves it, log in with your email and password.')} <a href="#/signup">${T('가입 신청', 'Request access')} →</a></p></li>
   <li><strong>${T('소셜 계정 연결', 'Connect a social account')}</strong><p>${T('대시보드 → 소셜 계정에서 채널을 고르고 플랫폼 승인 화면에서 허용합니다.', 'Dashboard → Social accounts: choose a channel and approve on the platform.')}</p></li>
   <li><strong>${T('에이전트 연결', 'Connect your agent')}</strong><p>${T('사용 중인 에이전트에 MCP 서버 주소를 추가합니다.', 'Add the MCP server URL to your agent.')}</p>${AL.code(AL.AGENTS[0].snippet.code, 'Claude Code')}</li>
   <li><strong>${T('연결 확인', 'Verify')}</strong><p>${T('에이전트에게 “연결된 소셜 계정 보여줘”라고 요청합니다.', 'Ask your agent: “Show my connected social accounts.”')}</p></li>

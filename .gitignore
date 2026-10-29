@@ -1,2 +1,4 @@
 *.pdf
 .playwright-cli/
+data/
+node_modules/

@@ -33,6 +33,25 @@
   AL.code = (code, label) => `<div class="code">${label ? `<div class="code-label">${AL.esc(label)}</div>` : ''}<button class="copy-btn" data-copy="${AL.esc(code)}">${AL.T('복사', 'Copy')}</button><pre><code>${AL.esc(code)}</code></pre></div>`;
   AL.copyField = (val, label) => `<div class="copy-field"><code aria-label="${AL.esc(label || '')}">${AL.esc(val)}</code><button class="btn btn-secondary btn-sm" data-copy="${AL.esc(val)}">${AL.T('복사', 'Copy')}</button></div>`;
 
+  // 서버 API 호출. 정적 호스팅(서버 없음)이면 status 0으로 돌려준다.
+  AL.session = null;
+  AL.apiOffline = false;
+  AL.api = async function (method, url, body) {
+    try {
+      const res = await fetch(url, {
+        method,
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      const isJson = (res.headers.get('content-type') || '').includes('application/json');
+      if (!isJson) return { ok: false, status: 0, data: { error: 'offline' } };
+      return { ok: res.ok, status: res.status, data: await res.json() };
+    } catch (e) {
+      return { ok: false, status: 0, data: { error: 'offline' } };
+    }
+  };
+
   AL.toast = function (msg) {
     document.querySelectorAll('.toast').forEach((t) => t.remove());
     const el = document.createElement('div');
@@ -134,7 +153,7 @@
       ['/blog', T('블로그', 'Blog')]
     ];
     const isActive = (p) => (p === '/docs' ? path.startsWith('/docs') && !path.startsWith('/docs/api') : path.startsWith(p.replace(/-posts$/, '')));
-    const user = AL.state && AL.state().user;
+    const user = AL.session;
     return `
 <a class="skip-link" href="#main" onclick="event.preventDefault();document.getElementById('main').focus()">${T('본문 바로가기', 'Skip to content')}</a>
 <header class="site-header">
@@ -148,6 +167,7 @@
         <button data-lang="ko" aria-pressed="${AL.lang === 'ko'}">KO</button>
         <button data-lang="en" aria-pressed="${AL.lang === 'en'}">EN</button>
       </div>
+      ${user && user.role === 'admin' ? `<a class="btn btn-ghost btn-sm" href="#/dashboard/admin">${T('관리자', 'Admin')}</a>` : ''}
       <a class="btn btn-ghost btn-sm" href="#/dashboard">${user ? T('대시보드', 'Dashboard') : T('로그인', 'Log in')}</a>
       <a class="btn btn-primary btn-sm" href="#/dashboard/mcp">${T('에이전트 연결', 'Connect agent')}</a>
       <button class="nav-toggle" aria-label="${T('메뉴 열기', 'Open menu')}" aria-expanded="false" aria-controls="main-nav">☰</button>

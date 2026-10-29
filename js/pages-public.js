@@ -389,7 +389,7 @@
     privacy: {
       title: { ko: '개인정보 처리방침', en: 'Privacy policy' },
       sections: [
-        [{ ko: '수집하는 정보', en: 'Information we collect' }, { ko: '계정 정보(이메일, 로그인 제공자), 연결된 소셜 계정의 식별자와 OAuth 토큰, 발행 요청 내용과 결과, 서비스 이용 기록.', en: 'Account info (email, login provider), identifiers and OAuth tokens of connected social accounts, publish request content and results, usage logs.' }],
+        [{ ko: '수집하는 정보', en: 'Information we collect' }, { ko: '계정 정보(이름, 이메일, 소속, 가입 신청 사유, 암호화된 비밀번호), 연결된 소셜 계정의 식별자와 OAuth 토큰, 발행 요청 내용과 결과, 서비스 이용 기록.', en: 'Account info (name, email, company, access request reason, hashed password), identifiers and OAuth tokens of connected social accounts, publish request content and results, usage logs.' }],
         [{ ko: '이용 목적', en: 'How we use it' }, { ko: '사용자가 요청한 게시물 발행, 발행 결과·이력 제공, 오류 처리와 보안 유지.', en: 'Publishing requested posts, providing results and history, error handling and security.' }],
         [{ ko: '토큰 보관', en: 'Token storage' }, { ko: '플랫폼 토큰은 암호화해 저장하며 AI 에이전트나 제3자에게 전달하지 않습니다. 연결 해제 시 즉시 폐기합니다.', en: 'Platform tokens are stored encrypted and never shared with AI agents or third parties. They are revoked immediately on disconnect.' }],
         [{ ko: '보존 기간', en: 'Retention' }, { ko: '발행 이력은 워크스페이스가 유지되는 동안 보관하며, 삭제 요청 시 데이터 삭제 절차에 따라 처리합니다. (세부 기간은 제품 담당자 검토 후 확정)', en: 'History is kept while the workspace exists and deleted per the data deletion process. (Exact periods to be confirmed.)' }]

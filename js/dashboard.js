@@ -6,45 +6,115 @@
   const { T, L, esc } = AL;
   const KEY = 'al_state';
 
-  const empty = () => ({ user: null, workspace: 'My workspace', mcpClients: [], accounts: [], posts: [], apiKeys: [] });
+  // 계정·로그인은 서버(server.js)가 관리하고, 연결 계정·발행 기록 등 시연 데이터는 사용자별로 브라우저에 저장한다
+  const empty = () => ({ workspace: 'My workspace', mcpClients: [], accounts: [], posts: [], apiKeys: [] });
   let cache = null;
+  let cacheKey = null;
   AL.state = function () {
-    if (cache) return cache;
-    try { cache = JSON.parse(localStorage.getItem(KEY)) || empty(); } catch (e) { cache = empty(); }
+    const key = KEY + ':' + (AL.session ? AL.session.id : 'guest');
+    if (cache && cacheKey === key) return cache;
+    cacheKey = key;
+    try { cache = JSON.parse(localStorage.getItem(key)) || empty(); } catch (e) { cache = empty(); }
     return cache;
   };
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(cache)); } catch (e) { /* 저장 불가 환경에서는 메모리 상태만 유지 */ } }
+  function save() { try { localStorage.setItem(cacheKey, JSON.stringify(cache)); } catch (e) { /* 저장 불가 환경에서는 메모리 상태만 유지 */ } }
   const uid = (p) => p + '_' + Math.random().toString(36).slice(2, 8);
   const fmtTime = (iso) => new Date(iso).toLocaleString(AL.lang === 'en' ? 'en-US' : 'ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-  /* ---------- 로그인 ---------- */
+  /* ---------- 로그인 (관리자 승인을 받은 계정만) ---------- */
+  const offlineNote = () => (AL.apiOffline ? `<div class="callout warn"><strong>${T('서버에 연결할 수 없습니다', 'Server unavailable')}</strong><p class="small">${T('로그인과 가입 신청은 서버가 필요합니다. 프로젝트 폴더에서 <code>npm start</code>로 실행하세요.', 'Login and sign-up need the server. Run <code>npm start</code> in the project folder.')}</p></div>` : '');
+  const AUTH_ERRORS = {
+    invalid_credentials: { ko: '이메일 또는 비밀번호가 올바르지 않습니다.', en: 'Incorrect email or password.' },
+    pending: { ko: '가입 신청을 검토하고 있습니다. 관리자가 승인하면 로그인할 수 있습니다.', en: 'Your request is under review. You can log in once an admin approves it.' },
+    rejected: { ko: '가입 신청이 승인되지 않았습니다. 관리자에게 문의하세요.', en: 'Your request was not approved. Please contact the admin.' },
+    disabled: { ko: '비활성화된 계정입니다. 관리자에게 문의하세요.', en: 'This account is disabled. Please contact the admin.' },
+    rate_limited: { ko: '로그인 시도가 너무 많습니다. 15분 후 다시 시도하세요.', en: 'Too many attempts. Try again in 15 minutes.' },
+    email_exists: { ko: '이미 가입했거나 신청한 이메일입니다.', en: 'This email is already registered or pending.' },
+    weak_password: { ko: '비밀번호는 8자 이상이어야 합니다.', en: 'Password must be at least 8 characters.' },
+    invalid_input: { ko: '이름과 이메일을 올바르게 입력하세요.', en: 'Enter a valid name and email.' },
+    too_many_pending: { ko: '대기 중인 신청이 너무 많습니다. 잠시 후 다시 시도하세요.', en: 'Too many pending requests. Try again later.' },
+    offline: { ko: '서버에 연결할 수 없습니다.', en: 'Cannot reach the server.' }
+  };
+  const authError = (code) => L(AUTH_ERRORS[code] || { ko: '요청을 처리하지 못했습니다.', en: 'Something went wrong.' });
+  const showError = (el, code) => { el.hidden = false; el.innerHTML = `<p>${authError(code)}</p>`; el.className = 'callout ' + (code === 'pending' ? 'warn' : 'err'); };
+
   AL.pages.login = function (_, query) {
     const next = query.get('next') || '/dashboard';
+    if (AL.session) { location.replace('#' + next); return { html: '' }; }
     return {
       title: T('로그인', 'Log in'),
       noFooter: true,
       html: `
 <div class="auth-wrap"><div class="card auth-card">
   <h1 style="font-size:1.5rem">${T('agentlink에 로그인', 'Log in to agentlink')}</h1>
-  <p class="muted small">${T('계정이 없으면 자동으로 가입됩니다. 로그인 후 요청한 화면으로 돌아갑니다.', 'New here? An account is created automatically. You will return to where you were.')}</p>
-  <button class="btn btn-secondary" data-provider="Google">G&nbsp; ${T('Google로 계속하기', 'Continue with Google')}</button>
-  <button class="btn btn-secondary" data-provider="GitHub">⌥&nbsp; ${T('GitHub로 계속하기', 'Continue with GitHub')}</button>
-  <div class="divider">${T('또는', 'or')}</div>
-  <form id="email-form">
-    <div class="field"><label for="email">${T('이메일', 'Email')}</label><input id="email" type="email" required placeholder="you@example.com" autocomplete="email"></div>
-    <button class="btn btn-primary" type="submit">${T('이메일로 로그인 링크 받기', 'Email me a login link')}</button>
+  <p class="muted small">${T('관리자 승인을 받은 계정만 로그인할 수 있습니다. 로그인 후 요청한 화면으로 돌아갑니다.', 'Only admin-approved accounts can log in. You will return to where you were.')}</p>
+  ${offlineNote()}
+  <div id="auth-msg" role="alert" hidden></div>
+  <form id="login-form">
+    <div class="field"><label for="email">${T('이메일', 'Email')}</label><input id="email" name="email" type="email" required autocomplete="email"></div>
+    <div class="field"><label for="password">${T('비밀번호', 'Password')}</label><input id="password" name="password" type="password" required autocomplete="current-password"></div>
+    <button class="btn btn-primary" type="submit">${T('로그인', 'Log in')}</button>
   </form>
-  <p class="small muted" style="margin-top:12px">${T('계속하면', 'By continuing you agree to the')} <a href="#/legal/terms">${T('이용약관', 'Terms')}</a>${T('과', ' and')} <a href="#/legal/privacy">${T('개인정보 처리방침', 'Privacy policy')}</a>${T('에 동의합니다.', '.')}</p>
+  <div class="divider">${T('계정이 없나요?', 'No account?')}</div>
+  <a class="btn btn-secondary" href="#/signup">${T('가입 신청하기', 'Request access')}</a>
 </div></div>`,
       mount() {
-        const done = (provider, email) => {
-          const s = AL.state();
-          s.user = { provider, email: email || (provider.toLowerCase() + '.user@example.com') };
-          save();
+        const form = document.getElementById('login-form');
+        form.onsubmit = async (e) => {
+          e.preventDefault();
+          const btn = form.querySelector('button');
+          btn.disabled = true;
+          const r = await AL.api('POST', '/api/login', { email: form.elements.email.value, password: form.elements.password.value });
+          btn.disabled = false;
+          if (!r.ok) { form.elements.password.value = ''; return showError(document.getElementById('auth-msg'), r.data.error); }
+          AL.session = r.data.user;
           AL.go(next.startsWith('/') ? next : '/dashboard');
         };
-        document.querySelectorAll('[data-provider]').forEach((b) => (b.onclick = () => done(b.dataset.provider)));
-        document.getElementById('email-form').onsubmit = (e) => { e.preventDefault(); done('Email', document.getElementById('email').value); };
+      }
+    };
+  };
+
+  /* ---------- 가입 신청 ---------- */
+  AL.pages.signup = function () {
+    return {
+      title: T('가입 신청', 'Request access'),
+      noFooter: true,
+      html: `
+<div class="auth-wrap"><div class="card auth-card" id="signup-card">
+  <h1 style="font-size:1.5rem">${T('가입 신청', 'Request access')}</h1>
+  <p class="muted small">${T('신청서를 보내면 관리자가 검토합니다. 승인되면 입력한 이메일과 비밀번호로 로그인할 수 있습니다.', 'An admin reviews each request. Once approved, log in with this email and password.')}</p>
+  ${offlineNote()}
+  <div id="auth-msg" role="alert" hidden></div>
+  <form id="signup-form">
+    <div class="field"><label for="name">${T('이름', 'Name')}</label><input id="name" name="name" type="text" required maxlength="50" autocomplete="name"></div>
+    <div class="field"><label for="email">${T('이메일', 'Email')}</label><input id="email" name="email" type="email" required autocomplete="email"></div>
+    <div class="field"><label for="company">${T('소속 (선택)', 'Company (optional)')}</label><input id="company" name="company" type="text" maxlength="100" autocomplete="organization"></div>
+    <div class="field"><label for="password">${T('비밀번호 (8자 이상)', 'Password (8+ chars)')}</label><input id="password" name="password" type="password" required minlength="8" autocomplete="new-password"></div>
+    <div class="field"><label for="password2">${T('비밀번호 확인', 'Confirm password')}</label><input id="password2" name="password2" type="password" required minlength="8" autocomplete="new-password"></div>
+    <div class="field"><label for="reason">${T('사용 목적 (선택)', 'What will you use it for? (optional)')}</label><textarea id="reason" name="reason" maxlength="500" style="min-height:80px"></textarea></div>
+    <button class="btn btn-primary" type="submit">${T('신청하기', 'Submit request')}</button>
+  </form>
+  <p class="small muted" style="margin-top:12px">${T('신청하면', 'By submitting you agree to the')} <a href="#/legal/terms">${T('이용약관', 'Terms')}</a>${T('과', ' and')} <a href="#/legal/privacy">${T('개인정보 처리방침', 'Privacy policy')}</a>${T('에 동의합니다.', '.')} · <a href="#/login">${T('로그인', 'Log in')}</a></p>
+</div></div>`,
+      mount() {
+        const form = document.getElementById('signup-form');
+        const msg = document.getElementById('auth-msg');
+        form.onsubmit = async (e) => {
+          e.preventDefault();
+          if (form.elements.password.value !== form.elements.password2.value) {
+            msg.hidden = false; msg.className = 'callout err'; msg.innerHTML = `<p>${T('비밀번호가 서로 다릅니다.', 'Passwords do not match.')}</p>`;
+            return;
+          }
+          const btn = form.querySelector('button');
+          btn.disabled = true;
+          const r = await AL.api('POST', '/api/signup', { name: form.elements.name.value, email: form.elements.email.value, company: form.elements.company.value, password: form.elements.password.value, reason: form.elements.reason.value });
+          btn.disabled = false;
+          if (!r.ok) return showError(msg, r.data.error);
+          document.getElementById('signup-card').innerHTML = `
+            <h1 style="font-size:1.5rem">${T('신청이 접수되었습니다', 'Request received')}</h1>
+            <div class="callout ok"><p>${T('관리자가 검토한 뒤 승인하면 로그인할 수 있습니다. 승인 전에 로그인하면 “검토 중” 안내가 표시됩니다.', 'You can log in once an admin approves it. Until then, logging in shows “under review”.')}</p></div>
+            <a class="btn btn-primary" href="#/login">${T('로그인 화면으로', 'Go to login')}</a>`;
+        };
       }
     };
   };
@@ -57,18 +127,19 @@
     ['accounts', '⚭', T('소셜 계정', 'Social accounts')],
     ['mcp', '⌬', T('MCP 연결', 'MCP')],
     ['keys', '⚿', T('API 키', 'API keys')],
-    ['settings', '⚙', T('설정', 'Settings')]
+    ['settings', '⚙', T('설정', 'Settings')],
+    ...(AL.session && AL.session.role === 'admin' ? [['admin', '★', T('회원 관리', 'Members')]] : [])
   ];
 
   AL.pages.dashboard = function ({ tab }) {
     tab = tab || 'overview';
-    const s = AL.state();
-    if (!s.user) {
+    if (!AL.session) {
       location.replace('#/login?next=' + encodeURIComponent('/dashboard' + (tab !== 'overview' ? '/' + tab : '')));
       return { html: '' };
     }
+    const s = AL.state();
     const view = VIEWS[tab];
-    if (!view) return AL.pages.notFound();
+    if (!view || (tab === 'admin' && AL.session.role !== 'admin')) return AL.pages.notFound();
     const v = view(s);
     return {
       title: v.title + ' · ' + T('대시보드', 'Dashboard'),
@@ -76,7 +147,7 @@
       html: `
 <div class="dash">
   <aside class="dash-side">
-    <div class="ws"><strong>${esc(s.workspace)}</strong><small>${esc(s.user.email)}</small></div>
+    <div class="ws"><strong>${esc(s.workspace)}</strong><small>${esc(AL.session.email)}${AL.session.role === 'admin' ? ' · ' + T('관리자', 'Admin') : ''}</small></div>
     <nav aria-label="${T('대시보드 메뉴', 'Dashboard')}">
       ${TABS().map(([id, ic, label]) => `<a href="#/dashboard${id === 'overview' ? '' : '/' + id}" class="${id === tab ? 'active' : ''}" ${id === tab ? 'aria-current="page"' : ''}><span aria-hidden="true">${ic}</span>${label}</a>`).join('')}
     </nav>
@@ -215,9 +286,18 @@ ${post.results.map((r) => {
       const doneAll = steps.every((x) => x[0]);
       return {
         title: T('개요', 'Overview'),
-        sub: T(`안녕하세요, ${s.user.email}`, `Welcome, ${s.user.email}`),
+        sub: T(`안녕하세요, ${esc(AL.session.name)}님`, `Welcome, ${esc(AL.session.name)}`),
         actions: `<a class="btn btn-primary" href="#/dashboard/publish">✎ ${T('새 게시물', 'New post')}</a>`,
+        mount() {
+          if (AL.session.role !== 'admin') return;
+          AL.api('GET', '/api/admin/users').then((r) => {
+            const n = r.ok ? r.data.users.filter((u) => u.status === 'pending').length : 0;
+            const el = document.getElementById('admin-pending');
+            if (n && el) el.innerHTML = `<div class="callout warn"><strong>${T(`승인을 기다리는 가입 신청 ${n}건`, `${n} pending access request(s)`)}</strong><a href="#/dashboard/admin">${T('회원 관리에서 검토', 'Review in Members')} →</a></div>`;
+          });
+        },
         html: `
+<div id="admin-pending"></div>
 ${doneAll ? '' : `<div class="card" style="margin-bottom:20px"><h3>${T('시작하기', 'Get started')}</h3><ul class="checklist">
   ${steps.map(([d, label, href]) => `<li class="${d ? 'done' : ''}"><span class="tick">${d ? '✓' : ''}</span><span class="t">${label}</span>${d ? '' : `<a class="btn btn-secondary btn-sm" href="${href}">${T('시작', 'Start')}</a>`}</li>`).join('')}
 </ul></div>`}
@@ -498,7 +578,7 @@ ${s.accounts.some((a) => a.status === 'reauth') ? `<div class="callout warn"><st
         html: `
 <div class="card" style="margin-bottom:20px"><h3>${T('워크스페이스', 'Workspace')}</h3>
   <form id="ws-form" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end"><div style="flex:1;min-width:200px"><label for="ws-name">${T('이름', 'Name')}</label><input id="ws-name" type="text" value="${esc(s.workspace)}" required></div><button class="btn btn-secondary" type="submit">${T('저장', 'Save')}</button></form>
-  <p class="small muted" style="margin-top:12px">${T('로그인', 'Signed in with')} ${esc(s.user.provider)} · ${esc(s.user.email)}</p>
+  <p class="small muted" style="margin-top:12px">${T('로그인 계정', 'Signed in as')}: ${esc(AL.session.name)} · ${esc(AL.session.email)} · ${AL.session.role === 'admin' ? T('관리자', 'Admin') : T('일반 회원', 'Member')}</p>
   <button class="btn btn-secondary btn-sm" id="logout">${T('로그아웃', 'Log out')}</button>
 </div>
 <div class="card"><h3>${T('보안 및 데이터 삭제', 'Security & data deletion')}</h3>
@@ -506,11 +586,11 @@ ${s.accounts.some((a) => a.status === 'reauth') ? `<div class="callout warn"><st
   <div class="list-row" style="padding-left:0;padding-right:0"><div class="grow"><strong>${T('모든 소셜 계정 연결 해제', 'Disconnect all social accounts')}</strong><div class="sub">${T('모든 플랫폼 토큰을 즉시 폐기합니다.', 'Revokes all platform tokens immediately.')}</div></div><button class="btn btn-danger btn-sm" data-wipe="accounts">${T('해제', 'Disconnect')}</button></div>
   <div class="list-row" style="padding-left:0;padding-right:0"><div class="grow"><strong>${T('모든 에이전트·API 키 철회', 'Revoke all agents & API keys')}</strong><div class="sub">${T('MCP 액세스 토큰과 API 키를 폐기합니다.', 'Revokes MCP tokens and API keys.')}</div></div><button class="btn btn-danger btn-sm" data-wipe="access">${T('철회', 'Revoke')}</button></div>
   <div class="list-row" style="padding-left:0;padding-right:0"><div class="grow"><strong>${T('발행 기록 삭제', 'Delete history')}</strong><div class="sub">${T('플랫폼에 게시된 글은 삭제되지 않습니다.', 'Published posts on platforms are not deleted.')}</div></div><button class="btn btn-danger btn-sm" data-wipe="history">${T('삭제', 'Delete')}</button></div>
-  <div class="list-row" style="padding-left:0;padding-right:0"><div class="grow"><strong>${T('워크스페이스와 계정 삭제', 'Delete workspace & account')}</strong><div class="sub">${T('모든 데이터와 연결 정보를 삭제하고 로그아웃합니다.', 'Deletes all data and connections and logs out.')}</div></div><button class="btn btn-danger btn-sm" data-wipe="all">${T('전체 삭제', 'Delete all')}</button></div>
+  ${AL.session.role === 'admin' ? `<p class="small muted" style="margin:12px 0 0">${T('관리자 계정은 여기서 삭제할 수 없습니다. 서버 환경 변수(ADMIN_EMAIL)로 관리합니다.', 'The admin account cannot be deleted here; it is managed by the ADMIN_EMAIL server variable.')}</p>` : `<div class="list-row" style="padding-left:0;padding-right:0"><div class="grow"><strong>${T('워크스페이스와 계정 삭제', 'Delete workspace & account')}</strong><div class="sub">${T('모든 데이터와 연결 정보, 회원 계정을 삭제하고 로그아웃합니다. 다시 사용하려면 가입 신청과 승인이 필요합니다.', 'Deletes all data, connections and your account, then logs out. Using it again requires a new request and approval.')}</div></div><button class="btn btn-danger btn-sm" data-wipe="all">${T('전체 삭제', 'Delete all')}</button></div>`}
 </div>`,
         mount() {
           document.getElementById('ws-form').onsubmit = (e) => { e.preventDefault(); s.workspace = document.getElementById('ws-name').value.trim() || s.workspace; save(); AL.render(); AL.toast(T('저장했습니다.', 'Saved.')); };
-          document.getElementById('logout').onclick = () => { s.user = null; save(); AL.go('/'); };
+          document.getElementById('logout').onclick = async () => { await AL.api('POST', '/api/logout'); AL.session = null; AL.go('/'); };
           const wipe = {
             accounts: () => { s.accounts = []; },
             access: () => { s.mcpClients = []; s.apiKeys = []; },
@@ -518,10 +598,106 @@ ${s.accounts.some((a) => a.status === 'reauth') ? `<div class="callout warn"><st
             all: () => { Object.assign(s, empty()); }
           };
           document.querySelectorAll('[data-wipe]').forEach((b) => (b.onclick = () => confirmModal(T('되돌릴 수 없는 작업', 'This cannot be undone'), b.closest('.list-row').querySelector('.sub').textContent + ' ' + T('계속할까요?', 'Continue?'), b.textContent, () => {
-            wipe[b.dataset.wipe](); save();
-            if (b.dataset.wipe === 'all') AL.go('/'); else AL.render();
+            if (b.dataset.wipe === 'all') {
+              AL.api('DELETE', '/api/me').then((r) => {
+                if (!r.ok) return AL.toast(T('계정을 삭제하지 못했습니다.', 'Could not delete the account.'));
+                wipe.all(); save();
+                try { localStorage.removeItem(KEY + ':' + AL.session.id); } catch (e) { /* ignore */ }
+                AL.session = null; AL.go('/');
+                AL.toast(T('계정과 데이터를 삭제했습니다.', 'Account and data deleted.'));
+              });
+              return;
+            }
+            wipe[b.dataset.wipe](); save(); AL.render();
             AL.toast(T('처리했습니다.', 'Done.'));
           })));
+        }
+      };
+    },
+
+    // 관리자 전용: 가입 신청 승인·거절, 계정 비활성화·삭제
+    admin() {
+      const FILTERS = [
+        ['pending', { ko: '승인 대기', en: 'Pending' }],
+        ['approved', { ko: '승인됨', en: 'Approved' }],
+        ['rejected', { ko: '거절됨', en: 'Rejected' }],
+        ['disabled', { ko: '비활성', en: 'Disabled' }],
+        ['all', { ko: '전체', en: 'All' }]
+      ];
+      // 공통 배지 색상 재사용: 대기=주황, 승인=초록, 거절=빨강, 비활성=회색
+      const BADGE = { pending: 'partial', approved: 'success', rejected: 'failed', disabled: 'planned' };
+      const label = (st) => L(FILTERS.find((f) => f[0] === st)[1]);
+      let filter = 'pending';
+      let list = [];
+
+      const actions = (u) => {
+        if (u.role === 'admin') return `<span class="small muted">${T('관리자', 'Admin')}</span>`;
+        const b = (act, text, cls) => `<button class="btn ${cls} btn-sm" data-act="${act}" data-id="${u.id}">${text}</button>`;
+        return {
+          pending: b('approve', T('승인', 'Approve'), 'btn-primary') + b('reject', T('거절', 'Reject'), 'btn-secondary'),
+          approved: b('disable', T('비활성화', 'Disable'), 'btn-secondary'),
+          rejected: b('approve', T('승인', 'Approve'), 'btn-secondary') + b('delete', T('삭제', 'Delete'), 'btn-danger'),
+          disabled: b('enable', T('다시 활성화', 'Enable'), 'btn-secondary') + b('delete', T('삭제', 'Delete'), 'btn-danger')
+        }[u.status];
+      };
+
+      const draw = () => {
+        const box = document.getElementById('member-list');
+        if (!box) return;
+        const count = (st) => (st === 'all' ? list.length : list.filter((u) => u.status === st).length);
+        document.getElementById('member-filters').innerHTML = FILTERS.map(([id, l]) => `<button class="btn btn-sm ${id === filter ? 'btn-primary' : 'btn-secondary'}" data-filter="${id}" aria-pressed="${id === filter}">${L(l)} ${count(id)}</button>`).join('');
+        const rows = list.filter((u) => filter === 'all' || u.status === filter);
+        box.innerHTML = rows.length ? rows.map((u) => `
+          <div class="list-row">
+            <div class="grow">
+              <strong>${esc(u.name)}</strong> <span class="muted">${esc(u.email)}</span>${u.company ? ` · <span class="small">${esc(u.company)}</span>` : ''}
+              <div class="sub">${T('신청', 'Requested')} ${fmtTime(u.createdAt)}${u.decidedAt ? ` · ${T('처리', 'Decided')} ${fmtTime(u.decidedAt)}` : ''}</div>
+              ${u.reason ? `<div class="small" style="margin-top:4px">“${esc(u.reason)}”</div>` : ''}
+            </div>
+            ${AL.statusBadge(BADGE[u.status], label(u.status))}
+            <div class="btn-row" style="gap:6px">${actions(u)}</div>
+          </div>`).join('') : `<div class="empty">${filter === 'pending' ? T('승인을 기다리는 신청이 없습니다.', 'No pending requests.') : T('해당하는 회원이 없습니다.', 'No members here.')}</div>`;
+        document.querySelectorAll('[data-filter]').forEach((x) => (x.onclick = () => { filter = x.dataset.filter; draw(); }));
+        document.querySelectorAll('[data-act]').forEach((x) => (x.onclick = () => act(x.dataset.act, list.find((u) => u.id === x.dataset.id))));
+      };
+
+      const load = async () => {
+        const r = await AL.api('GET', '/api/admin/users');
+        if (!r.ok) {
+          document.getElementById('member-list').innerHTML = `<div class="empty">${T('회원 목록을 불러오지 못했습니다.', 'Could not load members.')}</div>`;
+          if (r.status === 401) { AL.session = null; AL.render(); }
+          return;
+        }
+        list = r.data.users;
+        draw();
+      };
+
+      const act = (kind, u) => {
+        const run = async () => {
+          const r = kind === 'delete' ? await AL.api('DELETE', `/api/admin/users/${u.id}`) : await AL.api('POST', `/api/admin/users/${u.id}/${kind}`);
+          if (!r.ok) return AL.toast(T('처리하지 못했습니다.', 'Action failed.'));
+          AL.toast({ approve: T(`${u.name}님을 승인했습니다.`, `Approved ${u.name}.`), enable: T('다시 활성화했습니다.', 'Enabled.'), reject: T('신청을 거절했습니다.', 'Request rejected.'), disable: T('비활성화했습니다. 즉시 로그아웃됩니다.', 'Disabled. They are signed out immediately.'), delete: T('삭제했습니다.', 'Deleted.') }[kind]);
+          load();
+        };
+        if (kind === 'approve' || kind === 'enable') return run();
+        const text = {
+          reject: T(`${esc(u.name)}(${esc(u.email)})님의 가입 신청을 거절합니다. 이 사람은 로그인할 수 없습니다.`, `Reject ${esc(u.email)}? They will not be able to log in.`),
+          disable: T(`${esc(u.email)} 계정을 비활성화하면 현재 로그인도 즉시 끊기고 다시 로그인할 수 없습니다.`, `Disabling ${esc(u.email)} signs them out immediately and blocks login.`),
+          delete: T(`${esc(u.email)} 계정을 완전히 삭제합니다. 같은 이메일로 다시 가입 신청할 수 있게 됩니다.`, `Permanently delete ${esc(u.email)}? They may request access again.`)
+        }[kind];
+        confirmModal(T('확인', 'Confirm'), text, { reject: T('거절', 'Reject'), disable: T('비활성화', 'Disable'), delete: T('삭제', 'Delete') }[kind], run);
+      };
+
+      return {
+        title: T('회원 관리', 'Members'),
+        sub: T('가입 신청을 검토하고 승인합니다. 승인된 회원만 로그인할 수 있습니다.', 'Review access requests. Only approved members can log in.'),
+        actions: `<button class="btn btn-secondary" id="member-refresh">↻ ${T('새로고침', 'Refresh')}</button>`,
+        html: `
+<div class="btn-row" id="member-filters" style="margin-bottom:16px" role="group" aria-label="${T('상태 필터', 'Status filter')}"></div>
+<div class="card" style="padding:0" id="member-list"><div class="empty">${T('불러오는 중…', 'Loading…')}</div></div>`,
+        mount() {
+          document.getElementById('member-refresh').onclick = load;
+          load();
         }
       };
     }
